@@ -1,8 +1,12 @@
 // Implement member functions for SimplicialComplexOperators class.
 #include "simplicial-complex-operators.h"
+#include <Eigen/Sparse>
+#include <vector>
 
 using namespace geometrycentral;
 using namespace geometrycentral::surface;
+
+typedef Eigen::Triplet<double> T; // should the type be size_t instead of double?
 
 /*
  * Assign a unique index to each vertex, edge, and face of a mesh.
@@ -15,6 +19,8 @@ void SimplicialComplexOperators::assignElementIndices() {
 
     // Needed to access geometry->vertexIndices, etc. as cached quantities.
     // Not needed if you're just using v->getIndex(), etc.
+    // wg: i can't seem to find the definiiton of requireVertexIndices anywhere, i wonder how this works
+    // oh these are all things in geometry central i think 
     geometry->requireVertexIndices();
     geometry->requireEdgeIndices();
     geometry->requireFaceIndices();
@@ -52,28 +58,88 @@ void SimplicialComplexOperators::assignElementIndices() {
 /*
  * Construct the unsigned vertex-edge adjacency matrix A0.
  *
- * Input:
+ * Input: 
  * Returns: The sparse vertex-edge adjacency matrix which gets stored in the global variable A0.
  */
-SparseMatrix<size_t> SimplicialComplexOperators::buildVertexEdgeAdjacencyMatrix() const {
-
+SparseMatrix<size_t> SimplicialComplexOperators::buildVertexEdgeAdjacencyMatrix() const {    
+    geometry->requireVertexIndices();
+    geometry->requireEdgeIndices();
+    geometry->requireFaceIndices();
     // TODO
     // Note: You can build an Eigen sparse matrix from triplets, then return it as a Geometry Central SparseMatrix.
     // See <https://eigen.tuxfamily.org/dox/group__TutorialSparse.html> for documentation.
+    std::vector<T> tripletList;
+    tripletList.reserve(2*mesh->nEdges()); // two non-zero entries per row
+    /*
+        to construct A0 we need to iterate over all the edges, get the indices of its vertices
+        and then construct a tripe T(i,j, v_ij) -> T(edge_num, vert_1_num, 1), T(edge_num, vert_2_num, 1)
+    */
+    size_t edge_idx;
+    size_t first_vert_idx;
+    size_t second_vert_idx;
 
-    return identityMatrix<size_t>(1); // placeholder
+    for (Edge e : mesh->edges())
+    {
+        // do for in loops generally give pointers or references back?
+        edge_idx = geometry->edgeIndices[e];
+        first_vert_idx = geometry->vertexIndices[e.firstVertex()];
+        second_vert_idx = geometry->vertexIndices[e.secondVertex()]; 
+
+        tripletList.push_back(T(edge_idx, first_vert_idx, 1));
+        tripletList.push_back(T(edge_idx, second_vert_idx, 1));
+    }
+
+    SparseMatrix<size_t> mat(mesh->nEdges(), mesh->nVertices());
+    mat.setFromTriplets(tripletList.begin(), tripletList.end());
+
+    return mat;
 }
 
 /*
  * Construct the unsigned face-edge adjacency matrix A1.
  *
- * Input:
+ * Input: assuming that we're only concerned with simplectic surfaces
  * Returns: The sparse face-edge adjacency matrix which gets stored in the global variable A1.
  */
 SparseMatrix<size_t> SimplicialComplexOperators::buildFaceEdgeAdjacencyMatrix() const {
 
-    // TODO
-    return identityMatrix<size_t>(1); // placeholder
+    
+    /*
+        iterate over the faces. get some half-edge
+        keep traversing using the half edge, at each iteration
+            get the corresponding edge object, get its index and put it in the result matrix
+        probs need to keep the first edge so that we can tell where we started
+    */
+    geometry->requireVertexIndices();
+    geometry->requireEdgeIndices();
+    geometry->requireFaceIndices();
+
+    std::vector<T> tripletList;
+    tripletList.reserve(3*mesh->nFaces());
+
+    size_t f_idx;
+    size_t e_idx;
+    Edge currentEdge;
+    Halfedge first_halfEdge;
+    Halfedge current_halfEdge;
+    for (Face f : mesh->faces())
+    {
+        f_idx = geometry->faceIndices[f];
+        first_halfEdge = f.halfedge();
+        current_halfEdge = f.halfedge();
+        do  {
+            currentEdge = current_halfEdge.edge();
+            e_idx = geometry->edgeIndices[currentEdge];
+            tripletList.push_back(T(f_idx, e_idx, 1));
+
+            current_halfEdge = current_halfEdge.next();
+        } while (current_halfEdge != first_halfEdge);
+    }
+
+    SparseMatrix<size_t> mat(mesh->nFaces(), mesh->nEdges());
+    mat.setFromTriplets(tripletList.begin(), tripletList.end());
+
+    return mat;
 }
 
 /*
